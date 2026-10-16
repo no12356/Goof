@@ -1,3 +1,4 @@
+
 -- \\ Services // --
 
 local HttpService = game:GetService("HttpService")
@@ -74,14 +75,32 @@ local function DecodeConfig(): OwnedAchievements
     return success and result or {}
 end
 
--- Load external asset helper if it is not already available
-if typeof(LoadCustomAsset) ~= "function" then
-    pcall(function()
-        loadstring(game:HttpGet(
+-- \\ Load Custom Asset Helper // --
+
+local function GetLoadCustomAsset()
+    if typeof(LoadCustomAsset) == "function" then
+        return LoadCustomAsset
+    end
+
+    local success, result = pcall(function()
+        return loadstring(game:HttpGet(
             "https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Functions.lua"
         ))()
     end)
+
+    if typeof(LoadCustomAsset) == "function" then
+        return LoadCustomAsset
+    end
+
+    if success and typeof(result) == "function" then
+        return result
+    end
+
+    warn("[Custom Achievements] Could not load LoadCustomAsset.")
+    return nil
 end
+
+local LoadAsset = GetLoadCustomAsset()
 
 -- \\ Main // --
 
@@ -92,8 +111,8 @@ end
 Module.Revoke = function(self, identifier: string)
     local config = DecodeConfig()
 
-    for i, v in next, config do
-        if v == identifier then
+    for i = #config, 1, -1 do
+        if config[i] == identifier then
             table.remove(config, i)
         end
     end
@@ -108,7 +127,13 @@ Module.Grant = function(
 )
     options = typeof(options) == "table" and options or DefaultOptions
 
-    -- Check if player already owns custom achievement
+    -- Validate achievement configuration
+    if not achievementConfig.Identifier then
+        warn("[Custom Achievements] Missing achievement Identifier.")
+        return
+    end
+
+    -- Check if player already owns the achievement
     local config = DecodeConfig()
 
     if options.CheckOwned
@@ -117,30 +142,41 @@ Module.Grant = function(
         return
     end
 
-    -- Copy the achievement config so the original stays unchanged
+    -- Copy config so the original stays unchanged
     local displayConfig = table.clone(achievementConfig)
 
-    -- Load external image using LoadCustomAsset
-    if displayConfig.Image
-        and not displayConfig.Image:match("^rbxassetid://")
-    then
-        if typeof(LoadCustomAsset) == "function" then
-            local success, image = pcall(
-                LoadCustomAsset,
-                displayConfig.Image
-            )
+    -- Load external image
+    local imageUrl = displayConfig.Image
 
-            if success and image then
-                displayConfig.Image = image
+    if imageUrl
+        and not imageUrl:match("^rbxassetid://")
+        and not imageUrl:match("^rbxasset://")
+    then
+        -- Convert GitHub blob URLs into direct raw URLs
+        imageUrl = imageUrl:gsub(
+            "^https://github%.com/([^/]+)/([^/]+)/blob/([^/]+)/",
+            "https://raw.githubusercontent.com/%1/%2/%3/"
+        )
+
+        -- Remove GitHub's raw query parameter
+        imageUrl = imageUrl:gsub("%?raw=true$", "")
+
+        if LoadAsset then
+            local success, result = pcall(LoadAsset, imageUrl)
+
+            if success and result then
+                displayConfig.Image = result
             else
                 warn(
-                    "[Custom Achievements] Failed to load image:",
-                    displayConfig.Image,
-                    image
+                    "[Custom Achievements] Image loading failed:",
+                    result
                 )
             end
         else
-            warn("[Custom Achievements] LoadCustomAsset is unavailable.")
+            warn(
+                "[Custom Achievements] No asset loader available:",
+                imageUrl
+            )
         end
     end
 
@@ -151,7 +187,7 @@ Module.Grant = function(
         displayConfig
     )
 
-    -- Check if custom achievement should be remembered
+    -- Remember achievement
     if options.Remember
         and not self:CheckOwned(achievementConfig.Identifier)
     then
